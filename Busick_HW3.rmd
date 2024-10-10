@@ -1,0 +1,211 @@
+---
+title: "HW 3"
+author: "Hunter Busick"
+date: "10/10/2024"
+output: 
+  html_document:
+    number_sections: true
+---
+
+#
+
+Let $E[X] = \mu$.  Show that $Var[X] := E[(X-E[X])^2] = E[X^2]-(E[X])^2$.  Note, all you have to do is show the second equality (the first is our definition from class). 
+
+We can define variance as:
+$E[(X-E[X])^2]$
+
+Expanding this we have:
+$E[(X^2)-(2X)(E[X]) + (E[X]^2)]$
+
+Further expanding into into multiple expectations:
+$E[X^2] - 2 (E[X])(E[X]) + E[(E[X])^2]$
+
+Because $E[X]$ is a constant:
+$E[X^2] - 2(E[X])^2 + (E[X])^2$
+
+Combining like terms:
+$E[X^2]-(E[X])^2$
+
+QED
+
+
+# 
+
+In the computational section of this homework, we will discuss support vector machines and tree-based methods.  I will begin by simulating some data for you to use with SVM. 
+
+```{r}
+library(e1071)
+set.seed(1) 
+x=matrix(rnorm(200*2),ncol=2)
+x[1:100,]=x[1:100,]+2
+x[101:150,]=x[101:150,]-2
+y=c(rep(1,150),rep(2,50))
+dat=data.frame(x=x,y=as.factor(y))
+plot(x, col=y)
+
+```
+
+
+##
+
+Quite clearly, the above data is not linearly separable.  Create a training-testing partition with 100 random observations in the training partition.  Fit an svm on this training data using the radial kernel, and tuning parameters $\gamma=1$, cost $=1$.  Plot the svm on the training data.  
+
+```{r}
+set.seed(1)
+ran <- sample(1:nrow(dat), .5 * nrow(dat))
+dat_train <- dat[ran,]
+dat_test <- dat[-ran,]
+svmfit <- svm(y~., data = dat_train, kernel = "radial", cost = 1, gamma = 1)
+plot(svmfit, dat_train)
+
+```
+
+##
+
+Notice that the above decision boundary is decidedly non-linear.  It seems to perform reasonably well, but there are indeed some misclassifications.  Let's see if increasing the cost ^[Remember this is a parameter that decides how smooth your decision boundary should be] helps our classification error rate.  Refit the svm with the radial kernel, $\gamma=1$, and a cost of 10000.  Plot this svm on the training data. 
+
+```{r}
+svmfit2 <- svm(y~., data = dat_train, kernel = "radial", cost = 10000, gamma = 1)
+plot(svmfit2, dat_train)
+```
+
+##
+
+It would appear that we are better capturing the training data, but comment on the dangers (if any exist), of such a model. 
+
+In using such a high value for cost we run the risk of overfitting our model in such a way that it performs nearly perfect on the training set we feed it, but will struggle to accurately classify alternate data.
+
+##
+
+Create a confusion matrix by using this svm to predict on the current testing partition.  Comment on the confusion matrix.  Is there any disparity in our classification results?    
+
+```{r}
+#remove eval = FALSE in above
+table(actual=dat[-ran,"y"], pred=predict(svmfit2, newdata=dat[-ran,]))
+```
+This confusion matrix shows us that we accurately classified 86 observations and misclassified 14. Out of our misclassifications we inaccurately predicted 2-for-1 12 times, and inaccurately predicted 1-for-2 only 2 times. We should further investigate to see if we have non representative data in our train partition causing our imbalance in misclassification types.
+
+##
+
+Is this disparity because of imbalance in the training/testing partition?  Find the proportion of class `2` in your training partition and see if it is broadly representative of the underlying 25\% of class 2 in the data as a whole.  
+
+```{r}
+train_y_count <- table(dat_train$y)
+print(train_y_count)
+
+dat_y_count <- table(dat$y)
+print(dat_y_count)
+
+```
+As we can see with the above tables, our training sample consists of 29 *y=2* observations, while the data as a whole contains 50 datapoints of factor *y=2*. Thus 29% of our training partition consists of this second factor, seemingly representative of our data as a whole. 
+
+##
+
+Let's try and balance the above to solutions via cross-validation.  Using the `tune` function, pass in the training data, and a list of the following cost and $\gamma$ values: {0.1, 1, 10, 100, 1000} and {0.5, 1,2,3,4}.  Save the output of this function in a variable called `tune.out`.  
+
+```{r}
+set.seed(1)
+
+tune.out <- tune(svm, y ~ ., data = dat_train, kernel = "radial", ranges = list(cost = c(0.1, 1, 10, 100, 1000), gamma = c(0.5, 1, 2, 3, 4)))
+
+```
+
+I will take `tune.out` and use the best model according to error rate to test on our data.  I will report a confusion matrix corresponding to the 100 predictions.  
+
+
+```{r}
+table(actual=dat[-ran,"y"], pred=predict(tune.out$best.model, newdata=dat[-ran,]))
+plot(tune.out$best.model, dat_train)
+```
+
+##
+
+Comment on the confusion matrix.  How have we improved upon the model in question 2 and what qualifications are still necessary for this improved model.  
+
+In the confusion matrix using *best.model* we correctly classify 92% of our testing data, only misclassifying 8 observations which is an improvement from the earlier model in 2.2. In that model we used an extremely high cost value to force the model to select correct observations. This led to overfitting concerns. Using `tune` and a list of costs and gammas allowed us to select an optimal combination of the two parameters, helping the model more easily generalize.
+
+# 
+Let's turn now to decision trees.  
+
+```{r}
+library(kmed)
+data(heart)
+library(tree)
+```
+
+## 
+
+The response variable is currently a categorical variable with four levels.  Convert heart disease into binary categorical variable.  Then, ensure that it is properly stored as a factor. 
+
+```{r}
+library(dplyr)
+class2 <- ifelse(heart$class <= 1, "Low", "High")
+heart$class2 <- factor(class2, levels = c("Low", "High"))
+heart <- heart %>%
+  select(-class)
+str(heart)
+```
+
+## 
+
+Train a classification tree on a 240 observation training subset (using the seed I have set for you).  Plot the tree.  
+
+```{r}
+set.seed(101)
+
+train = sample(1:nrow(heart), 240)
+
+tree.heart <- tree(class2~., data = heart, subset = train)
+plot(tree.heart)
+text(tree.heart, pretty = 0)
+```
+
+
+## 
+
+Use the trained model to classify the remaining testing points.  Create a confusion matrix to evaluate performance.  Report the classification error rate.  
+
+```{r}
+heart.tree.predictions = predict(tree.heart, heart[-train,], type="class")
+with(heart[-train,], table(heart.tree.predictions, class2))
+(34+9)/57
+```
+
+##  
+
+Above we have a fully grown (bushy) tree.  Now, cross validate it using the `cv.tree` command.  Specify cross validation to be done according to the misclassification rate.  Choose an ideal number of splits, and plot this tree.  Finally, use this pruned tree to test on the testing set.  Report a confusion matrix and the misclassification rate.  
+
+```{r}
+set.seed(101)
+
+cv.heart = cv.tree(tree.heart, FUN = prune.misclass)
+cv.heart
+
+plot(cv.heart$size, cv.heart$dev, type = "b")
+
+prune.heart <- prune.misclass(tree.heart, best = 3)
+
+plot(prune.heart)
+text(prune.heart, pretty=0)
+
+tree.pred2 = predict(prune.heart, heart[-train,], type="class")
+with(heart[-train,], table(tree.pred2, class2))
+(36+7)/57
+
+```
+
+
+##
+
+Discuss the trade-off in accuracy and interpretability in pruning the above tree. 
+
+After pruning the above tree we make the interpretability of it significantly better while not sacrificing any accuracy. We receive the same error rate for the fully grown tree and the pruned tree, however the pruned tree is significantly easier to interpet as we use *best = 3* to cut the number of terminal nodes to 3. It is important to note that this tree has become extremely simple in its current form and may not get as good classification rates for external data, but for the sake of our training testing partition it fares just as well as the bushy one.
+
+## 
+
+Discuss the ways a decision tree could manifest algorithmic bias.  
+
+One of the biggest pitfalls of decision trees is that they are prone to overfitting in the creation and pruning process. If we have an extremely complex tree there may be patterns in that data that will not generalize to other sets. Similarly, when we prune we can make the tree too simple to the point where it will struggle to classify external datasets. As is the case with classification methods in general, if we have non representative training data we can not expect a productive result. The process of pruning makes having non representative data even worse.
+
+
+
